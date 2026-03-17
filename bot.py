@@ -257,9 +257,9 @@ def get_market_context(symbol, price, rsi, sma200, atr, trend):
             tips.append("Low volatility — tight conditions")
 
     hour = datetime.now(timezone.utc).hour
-    if 14 <= hour <= 20:
+    if 10 <= hour <= 2:
         tips.append("NY session active — peak liquidity window")
-    elif 7 <= hour <= 10:
+    elif 1 <= hour <= 10:
         tips.append("London/Asia overlap — elevated volatility possible")
 
     return " | ".join(tips)
