@@ -309,16 +309,15 @@ def is_high_quality(trend_aligned):
 # ─────────────────────────────────────────────
 
 def get_data(symbol):
-    url = f"https://api.twelvedata.com/time_series"
-           f"?symbol={symbol}&interval={INTERVAL}&outputsize=210&apikey={API_KEY_1}"
-           response = requests.get(url)
+    url = (f"https://api.twelvedata.com"
+           f"?symbol={symbol}&interval={INTERVAL}&outputsize=210&apikey={API_KEY_1}")
+    response = requests.get(url)
            
     if response.status_code !=200:
         print("API Key 1 exhausted.Switching to API Key 2...")
-        
-        url = f"https://api.twelvedata.com/time_series"
-           f"?symbol={symbol}&interval={INTERVAL}&outputsize=210&apikey={API_KEY_2}"
-           response = requests.get(url)
+        url = (f"https://api.twelvedata.com"
+           f"?symbol={symbol}&interval={INTERVAL}&outputsize=210&apikey={API_KEY_2}")
+        response = requests.get(url)
            
     if response.status_code !=200:
         print("Both API keys failed!")
