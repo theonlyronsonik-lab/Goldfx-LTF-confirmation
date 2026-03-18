@@ -14,10 +14,9 @@ from telegram.error import TelegramError
 # CONFIG
 # ─────────────────────────────────────────────
 
-API_KEY_1   = os.getenv("API_KEY_1", "")
-API_KEY_2   = os.getenv("API_KEY_2", "")
-BOT_TOKEN = os.getenv("BOT_TOKEN", "")
-CHAT_ID   = os.getenv("CHAT_ID", "")
+API_KEY    = os.getenv("API_KEY", "")
+BOT_TOKEN  = os.getenv("BOT_TOKEN", "")
+CHAT_ID    = os.getenv("CHAT_ID", "")
 
 SMTP_HOST   = os.getenv("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT   = int(os.getenv("SMTP_PORT", "587"))
@@ -25,45 +24,26 @@ SMTP_USER   = os.getenv("SMTP_USER", "")
 SMTP_PASS   = os.getenv("SMTP_PASS", "")
 ALERT_EMAIL = os.getenv("ALERT_EMAIL", "")
 
-SYMBOLS  = ["XAU/USD", "GBP/USD", "EUR/JPY"]
+SYMBOLS  = ["XAU/USD", "GBP/USD", "SPY", "QQQ"]
 INTERVAL = "5min"
 
 COOLDOWN_MINUTES = 15
-
-RSI_OVERBOUGHT = 70
-RSI_OVERSOLD   = 30
+ATR_SL_MULT      = 1.5
+ATR_TS_MULT      = 2.0
 
 SIGNALS_FILE = "signals.json"
 
-# Symbol-specific SL buffers (applied beyond the 5-candle wick)
-SL_BUFFERS = {
-    "XAU/USD": 0.50,
-    "GBP/USD": 0.0003,
-    "SPY":     0.10,
-    "QQQ":     0.10,
-}
-
-# Pip sizes per symbol
-PIP_SIZES = {
-    "XAU/USD": 0.1,
-    "GBP/USD": 0.0001,
-    "SPY":     0.01,
-    "QQQ":     0.01,
-}
-
-LOT_SIZE = 0.01  # Default lot size
-
-# State
+# State (in-memory, persisted to signals.json)
 last_signal_time = {}
 signal_stack     = {}
 active_trade     = {}
 recent_signals   = []
 trades_history   = []
 symbol_state     = {}
-last_div_time    = {}   # {symbol: {"BULL": candle_dt_str, "BEAR": candle_dt_str}}
 
+# Sessions (UTC hour ranges)
 SESSIONS = {
-    "Asia":     (2,  10),
+    "Asia":     (1,  10),
     "London":   (7,  16),
     "New York": (13, 22),
 }
@@ -74,7 +54,7 @@ SESSIONS = {
 # ─────────────────────────────────────────────
 
 def load_state():
-    global recent_signals, trades_history, active_trade
+    global recent_signals, trades_history
     if not os.path.exists(SIGNALS_FILE):
         return
     try:
@@ -83,25 +63,6 @@ def load_state():
         recent_signals = data.get("recent_signals", [])
         trades_history = data.get("trades_history", [])
         print(f"Loaded {len(trades_history)} historical trades, {len(recent_signals)} recent signals")
-
-        # Restore active trades from the most recent OPEN record per symbol
-        for sym in SYMBOLS:
-            open_trades = [t for t in trades_history
-                           if t["symbol"] == sym and t.get("outcome") == "OPEN"]
-            if open_trades:
-                last = open_trades[-1]
-                active_trade[sym] = {
-                    "type":          last["type"],
-                    "entry":         last["entry"],
-                    "sl":            last["sl"],
-                    "pip_size":      PIP_SIZES.get(sym, 0.0001),
-                    "trend_aligned": last.get("trend_aligned", False),
-                    "label":         last.get("label", ""),
-                    "session":       last.get("session", ""),
-                    "rsi_alerted":   False,
-                }
-        if active_trade:
-            print(f"Restored active trades: {list(active_trade.keys())}")
     except Exception as e:
         print(f"State load error: {e}")
 
@@ -109,6 +70,7 @@ def load_state():
 def compute_stats():
     closed = [t for t in trades_history if t.get("outcome") in ("WIN", "LOSS")]
     wins   = [t for t in closed if t["outcome"] == "WIN"]
+    losses = [t for t in closed if t["outcome"] == "LOSS"]
 
     by_asset   = {}
     by_session = {}
@@ -137,7 +99,7 @@ def compute_stats():
     return {
         "total":      total,
         "wins":       len(wins),
-        "losses":     total - len(wins),
+        "losses":     len(losses),
         "pending":    len([t for t in trades_history if t.get("outcome") == "OPEN"]),
         "win_rate":   round(len(wins) / total * 100, 1) if total else 0,
         "by_asset":   by_asset,
@@ -155,28 +117,16 @@ def save_state(session_on, current_sessions):
         "recent_signals":   recent_signals[-50:],
         "trades_history":   trades_history[-200:],
         "stats":            compute_stats(),
-        "pip_sizes":        PIP_SIZES,
-        "lot_size":         LOT_SIZE,
     }
     for sym in SYMBOLS:
         st = symbol_state.get(sym, {})
-        current_price = st.get("price")
-        at = active_trade.get(sym)
-        # Attach live pips/profit to active trade for dashboard display
-        if at and current_price is not None:
-            live_pips   = calc_pips(sym, at["entry"], current_price, at["type"])
-            live_profit = calc_profit(live_pips)
-            at_data = {**at, "current_price": current_price,
-                       "current_pips": live_pips, "current_profit": live_profit}
-        else:
-            at_data = at
         data["symbols"][sym] = {
-            "price":        current_price,
+            "price":        st.get("price"),
             "rsi":          st.get("rsi"),
             "sma200":       st.get("sma200"),
             "atr":          st.get("atr"),
             "trend":        st.get("trend"),
-            "active_trade": at_data,
+            "active_trade": active_trade.get(sym),
             "last_signal":  next(
                 (s for s in reversed(recent_signals) if s["symbol"] == sym), None
             ),
@@ -225,48 +175,6 @@ def session_label(sessions):
 
 
 # ─────────────────────────────────────────────
-# MARKET CONTEXT (rule-based tips)
-# ─────────────────────────────────────────────
-
-def get_market_context(symbol, price, rsi, sma200, atr, trend):
-    tips = []
-
-    if rsi is None:
-        return "Insufficient data."
-
-    if rsi >= RSI_OVERBOUGHT:
-        tips.append(f"RSI {rsi:.1f} — overbought, momentum may be exhausting")
-    elif rsi >= 60:
-        tips.append(f"RSI {rsi:.1f} — elevated, strong momentum but watch for pullback")
-    elif rsi <= RSI_OVERSOLD:
-        tips.append(f"RSI {rsi:.1f} — oversold, potential bounce zone")
-    elif rsi <= 40:
-        tips.append(f"RSI {rsi:.1f} — weak, selling pressure present")
-    else:
-        tips.append(f"RSI {rsi:.1f} — neutral zone")
-
-    if trend == "BULLISH":
-        tips.append("Above SMA200 — long-term uptrend")
-    elif trend == "BEARISH":
-        tips.append("Below SMA200 — long-term downtrend")
-
-    if atr and price:
-        vol_pct = (atr / price) * 100
-        if vol_pct > 1.0:
-            tips.append("High volatility — consider reduced size")
-        elif vol_pct < 0.2:
-            tips.append("Low volatility — tight conditions")
-
-    hour = datetime.now(timezone.utc).hour
-    if 10 <= hour <= 2:
-        tips.append("NY session active — peak liquidity window")
-    elif 1 <= hour <= 10:
-        tips.append("London/Asia overlap — elevated volatility possible")
-
-    return " | ".join(tips)
-
-
-# ─────────────────────────────────────────────
 # ALERTS
 # ─────────────────────────────────────────────
 
@@ -310,8 +218,8 @@ def is_high_quality(trend_aligned):
 
 def get_data(symbol):
     url = (f"https://api.twelvedata.com/time_series"
-           f"?symbol={symbol}&interval={INTERVAL}&outputsize=210&apikey={API_KEY_1}")
-            try:
+           f"?symbol={symbol}&interval={INTERVAL}&outputsize=210&apikey={API_KEY}")
+    try:
         r = requests.get(url, timeout=15).json()
     except Exception as e:
         print(f"Fetch error {symbol}: {e}")
@@ -358,7 +266,7 @@ def calc_atr(df, period=14):
 
 
 # ─────────────────────────────────────────────
-# PIVOTS
+# PIVOTS  (true divergence detection)
 # ─────────────────────────────────────────────
 
 def pivot_low(series, left=5, right=5):
@@ -382,39 +290,11 @@ def pivot_high(series, left=5, right=5):
 
 
 # ─────────────────────────────────────────────
-# SL / PIPS / PROFIT HELPERS
-# ─────────────────────────────────────────────
-
-def get_sl_buy(df, symbol):
-    """SL = lowest low of last 5 candles minus buffer."""
-    buf  = SL_BUFFERS.get(symbol, 0.0001)
-    low5 = df["low"].iloc[-5:].min()
-    return round(low5 - buf, 5)
-
-
-def get_sl_sell(df, symbol):
-    """SL = highest high of last 5 candles plus buffer."""
-    buf   = SL_BUFFERS.get(symbol, 0.0001)
-    high5 = df["high"].iloc[-5:].max()
-    return round(high5 + buf, 5)
-
-
-def calc_pips(symbol, entry, close_price, direction):
-    pip  = PIP_SIZES.get(symbol, 0.0001)
-    diff = (close_price - entry) if direction == "BUY" else (entry - close_price)
-    return round(diff / pip, 1)
-
-
-def calc_profit(pips, lot_size=None):
-    ls = lot_size if lot_size is not None else LOT_SIZE
-    return round(pips * ls * 10, 2)
-
-
-# ─────────────────────────────────────────────
-# DIVERGENCE
+# DIVERGENCE  (true RSI divergence)
 # ─────────────────────────────────────────────
 
 def bullish_div(df):
+    """Bullish: price lower low AND RSI higher low"""
     lows = pivot_low(df["low"])
     if len(lows) < 2:
         return False, None
@@ -427,6 +307,7 @@ def bullish_div(df):
 
 
 def bearish_div(df):
+    """Bearish: price higher high AND RSI lower high"""
     highs = pivot_high(df["high"])
     if len(highs) < 2:
         return False, None
@@ -456,10 +337,11 @@ def double_confirm(symbol, signal):
 
 
 # ─────────────────────────────────────────────
-# TRADE RECORDS
+# TRADE OUTCOME TRACKING
 # ─────────────────────────────────────────────
 
-def open_trade_record(symbol, sig_type, entry, sl, trend_aligned, label, sess):
+def open_trade_record(symbol, sig_type, entry, sl, trailing_stop,
+                      trend_aligned, label, sess):
     rec = {
         "symbol":        symbol,
         "type":          sig_type,
@@ -467,6 +349,7 @@ def open_trade_record(symbol, sig_type, entry, sl, trend_aligned, label, sess):
         "close_time":    None,
         "entry":         entry,
         "sl":            sl,
+        "trailing_stop": trailing_stop,
         "outcome":       "OPEN",
         "trend_aligned": trend_aligned,
         "label":         label,
@@ -476,126 +359,77 @@ def open_trade_record(symbol, sig_type, entry, sl, trend_aligned, label, sess):
     return rec
 
 
-def close_trade_record(symbol, outcome, close_price=None):
+def close_trade_record(symbol, outcome):
     for t in reversed(trades_history):
         if t["symbol"] == symbol and t["outcome"] == "OPEN":
             t["outcome"]    = outcome
             t["close_time"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-            if close_price is not None:
-                raw_pips = calc_pips(symbol, t["entry"], close_price, t["type"])
-                if outcome == "LOSS":
-                    raw_pips = -abs(raw_pips)
-                t["close_price"] = close_price
-                t["pips"]        = raw_pips
-                t["profit"]      = calc_profit(raw_pips)
-            print(f"Trade closed: {symbol} → {outcome} | pips: {t.get('pips','?')} | profit: ${t.get('profit','?')}")
-            return t
-    return None
+            print(f"Trade closed: {symbol} → {outcome}")
+            return
 
 
 # ─────────────────────────────────────────────
-# RSI TAKE PROFIT ZONE CHECK (TP Model 1)
-# Alert user when RSI reaches overbought/oversold
+# TRAILING STOP CHECK
 # ─────────────────────────────────────────────
 
-async def check_rsi_tp_zone(symbol, rsi):
+async def check_trailing_stop(symbol, df):
     if symbol not in active_trade:
         return
 
     trade = active_trade[symbol]
+    close = df["close"].iloc[-1]
+    atr   = df["atr"].iloc[-1]
+    if pd.isna(atr):
+        return
 
-    if trade["type"] == "BUY" and rsi >= RSI_OVERBOUGHT:
-        if not trade.get("rsi_alerted"):
-            msg = (
-                f"⚠️ RSI TP ZONE — {symbol}\n"
-                f"BUY trade @ {trade['entry']} | RSI: {rsi:.1f} (OVERBOUGHT)\n"
-                f"Consider closing for profit or hold for opposite signal.\n"
-                f"Session: {trade.get('session', 'N/A')}"
-            )
+    if trade["type"] == "BUY":
+        new_ts = round(close - ATR_TS_MULT * atr, 5)
+        if new_ts > trade.get("trailing_stop", 0):
+            active_trade[symbol]["trailing_stop"] = new_ts
+
+        if close < active_trade[symbol]["trailing_stop"]:
+            msg = f"🛑 TRAILING STOP HIT — {symbol} BUY @ {trade['entry']}"
             print(msg)
             await send_telegram(msg)
-            active_trade[symbol]["rsi_alerted"] = True
+            close_trade_record(symbol, "LOSS")
+            del active_trade[symbol]
 
-    elif trade["type"] == "SELL" and rsi <= RSI_OVERSOLD:
-        if not trade.get("rsi_alerted"):
-            msg = (
-                f"⚠️ RSI TP ZONE — {symbol}\n"
-                f"SELL trade @ {trade['entry']} | RSI: {rsi:.1f} (OVERSOLD)\n"
-                f"Consider closing for profit or hold for opposite signal.\n"
-                f"Session: {trade.get('session', 'N/A')}"
-            )
+    elif trade["type"] == "SELL":
+        new_ts = round(close + ATR_TS_MULT * atr, 5)
+        if new_ts < trade.get("trailing_stop", float("inf")):
+            active_trade[symbol]["trailing_stop"] = new_ts
+
+        if close > active_trade[symbol]["trailing_stop"]:
+            msg = f"🛑 TRAILING STOP HIT — {symbol} SELL @ {trade['entry']}"
             print(msg)
             await send_telegram(msg)
-            active_trade[symbol]["rsi_alerted"] = True
-
-    # Reset alert flag if RSI moves back out of the zone
-    elif trade.get("rsi_alerted"):
-        if trade["type"] == "BUY" and rsi < RSI_OVERBOUGHT - 5:
-            active_trade[symbol]["rsi_alerted"] = False
-        elif trade["type"] == "SELL" and rsi > RSI_OVERSOLD + 5:
-            active_trade[symbol]["rsi_alerted"] = False
+            close_trade_record(symbol, "LOSS")
+            del active_trade[symbol]
 
 
 # ─────────────────────────────────────────────
-# SL CHECK — Price hits stop loss
+# TP CHECK (opposite signal)
 # ─────────────────────────────────────────────
 
-async def check_sl(symbol, price):
-    if symbol not in active_trade:
-        return
-    trade = active_trade[symbol]
-    sl = trade.get("sl")
-    if sl is None:
-        return
-    hit = (trade["type"] == "BUY" and price <= sl) or \
-          (trade["type"] == "SELL" and price >= sl)
-    if not hit:
-        return
-    raw_pips = calc_pips(symbol, trade["entry"], price, trade["type"])
-    raw_pips = -abs(raw_pips)
-    profit   = calc_profit(raw_pips)
-    msg = (
-        f"🛑 SL HIT — {symbol}\n"
-        f"{trade['type']} @ {trade['entry']} | SL: {sl}\n"
-        f"Close: {price} | Pips: {raw_pips} | P&L: ${profit}\n"
-        f"Session: {trade.get('session', 'N/A')}"
-    )
-    print(msg)
-    await send_telegram(msg)
-    close_trade_record(symbol, "LOSS", close_price=price)
-    del active_trade[symbol]
-
-
-# ─────────────────────────────────────────────
-# TP CHECK — Opposite Signal (TP Model 2)
-# ─────────────────────────────────────────────
-
-async def check_tp(symbol, signal, price=None):
+async def check_tp(symbol, signal):
     if symbol not in active_trade:
         return
 
     trade = active_trade[symbol]
-    closed_type = None
 
     if signal == "BUY" and trade["type"] == "SELL":
-        closed_type = "SELL"
+        msg = f"✅ TP HIT — {symbol} | SELL trade closed"
+        print(msg)
+        await send_telegram(msg)
+        close_trade_record(symbol, "WIN")
+        del active_trade[symbol]
+
     elif signal == "SELL" and trade["type"] == "BUY":
-        closed_type = "BUY"
-
-    if not closed_type:
-        return
-
-    raw_pips = calc_pips(symbol, trade["entry"], price, trade["type"]) if price else 0
-    profit   = calc_profit(raw_pips)
-    msg = (
-        f"✅ TP HIT (Opposite Signal) — {symbol}\n"
-        f"{closed_type} @ {trade['entry']} → Close: {price}\n"
-        f"Pips: {raw_pips} | P&L: ${profit} | Outcome: WIN"
-    )
-    print(msg)
-    await send_telegram(msg)
-    close_trade_record(symbol, "WIN", close_price=price)
-    del active_trade[symbol]
+        msg = f"✅ TP HIT — {symbol} | BUY trade closed"
+        print(msg)
+        await send_telegram(msg)
+        close_trade_record(symbol, "WIN")
+        del active_trade[symbol]
 
 
 # ─────────────────────────────────────────────
@@ -610,17 +444,14 @@ async def main():
     await send_telegram(
         f"🤖 Signal Bot Online\n"
         f"Symbols: {', '.join(SYMBOLS)}\n"
-        f"Interval: {INTERVAL}\n"
-        f"SL: Divergence candle wick\n"
-        f"TP1: RSI overbought/oversold alert\n"
-        f"TP2: Opposite double signal"
+        f"Interval: {INTERVAL} | ATR SL: {ATR_SL_MULT}x | ATR TS: {ATR_TS_MULT}x"
     )
 
     while True:
         try:
-            sessions = get_active_sessions()
-            sess_on  = sessions != ["Off-Hours"]
-            sess_str = session_label(sessions)
+            sessions     = get_active_sessions()
+            sess_on      = sessions != ["Off-Hours"]
+            sess_str     = session_label(sessions)
 
             if not sess_on:
                 now_str = datetime.now(timezone.utc).strftime("%H:%M")
@@ -634,18 +465,18 @@ async def main():
                 if df is None:
                     continue
 
-                df["rsi"]    = calc_rsi(df["close"])
+                df["rsi"]   = calc_rsi(df["close"])
                 df["sma200"] = calc_sma200(df["close"])
-                df["atr"]    = calc_atr(df)
+                df["atr"]   = calc_atr(df)
 
-                price   = round(df["close"].iloc[-1], 5)
-                rsi     = round(df["rsi"].iloc[-1], 2)
-                sma200  = df["sma200"].iloc[-1]
-                atr     = df["atr"].iloc[-1]
+                price  = round(df["close"].iloc[-1], 5)
+                rsi    = round(df["rsi"].iloc[-1], 2)
+                sma200 = df["sma200"].iloc[-1]
+                atr    = df["atr"].iloc[-1]
 
-                sma200_val = round(sma200, 5) if not pd.isna(sma200) else None
-                atr_val    = round(atr,    5) if not pd.isna(atr)    else None
-                trend      = None
+                sma200_val  = round(sma200, 5) if not pd.isna(sma200) else None
+                atr_val     = round(atr,    5) if not pd.isna(atr)    else None
+                trend       = None
                 if sma200_val:
                     trend = "BULLISH" if price > sma200_val else "BEARISH"
 
@@ -657,138 +488,109 @@ async def main():
                     "trend":  trend,
                 }
 
-                # Check RSI TP zone for active trade (TP Model 1)
-                await check_rsi_tp_zone(symbol, rsi)
-
-                # Check if SL has been hit by current price
-                await check_sl(symbol, price)
+                # Check trailing stop on active trade
+                await check_trailing_stop(symbol, df)
 
                 bull, bull_idx = bullish_div(df)
                 bear, bear_idx = bearish_div(df)
 
                 now = datetime.now(timezone.utc)
 
-                # If there's already an active trade, skip new signal generation
-                if symbol in active_trade:
-                    continue
+                if symbol in last_signal_time:
+                    if now - last_signal_time[symbol] < timedelta(minutes=COOLDOWN_MINUTES):
+                        continue
 
                 # ── BUY ──
-                if bull and bull_idx is not None:
-                    # Only signal if this is a NEW divergence candle (not same one as last signal)
-                    bull_candle_dt = str(df["datetime"].iloc[bull_idx]) if "datetime" in df.columns else str(bull_idx)
-                    sym_div = last_div_time.setdefault(symbol, {})
-                    if sym_div.get("BULL") == bull_candle_dt:
-                        bull = False  # same candle, skip
-                    else:
-                        await check_tp(symbol, "BUY", price)
-
-                if bull and bull_idx is not None:
+                if bull:
+                    await check_tp(symbol, "BUY")
                     ds = double_confirm(symbol, "BUY")
 
-                    if ds == "BUY":
+                    if ds == "BUY" and atr_val:
                         entry         = price
-                        sl            = get_sl_buy(df, symbol)
-                        pip_size      = PIP_SIZES.get(symbol, 0.0001)
+                        sl            = round(entry - ATR_SL_MULT * atr_val, 5)
+                        trailing_stop = round(entry - ATR_TS_MULT * atr_val, 5)
                         trend_aligned = (trend == "BULLISH")
                         label         = "Trend Aligned Signal" if trend_aligned else "Counter-Trend Signal"
                         ts            = now.strftime("%Y-%m-%d %H:%M UTC")
-                        context       = get_market_context(symbol, price, rsi, sma200_val, atr_val, trend)
-                        risk_pips     = round((entry - sl) / pip_size, 1)
 
                         tg_msg = (
-                            f"🟢 LTF_(5min) . .BUY — {symbol}\n"
-                            f"Entry: {entry} | SL: {sl} | Risk: {risk_pips} pips\n"
-                            f"Lot: {LOT_SIZE} | Pip: {pip_size}\n"
+                            f"🟢LTF 3 min BUY-signal — {symbol}\n"
+                            f"Entry: {entry} | SL: {sl} | TS: {trailing_stop}\n"
                             f"RSI: {rsi} | Trend: {trend} | {label}\n"
-                            f"Session: {sess_str} | {ts}\n"
-                            f"📊 Context: {context}\n"
-                            f"TP1: RSI overbought alert | TP2: Opposite signal"
-                            f"This is the LTF entry signal, confirm first but quick. Is high quality signal when it aligns with htf signal, say a check if there's been a htf signal above, like in the channel"
+                            f"Session: {sess_str} | {ts}"
                         )
                         print(tg_msg)
                         await send_telegram(tg_msg)
 
                         if is_high_quality(trend_aligned):
-                            send_email(f"⭐ HIGH QUALITY BUY — {symbol}", tg_msg)
+                            send_email(
+                                f"⭐ HIGH QUALITY BUY — {symbol}",
+                                tg_msg
+                            )
 
                         sig_rec = {
                             "symbol": symbol, "type": "BUY", "time": ts,
-                            "entry": entry, "sl": sl,
+                            "entry": entry, "sl": sl, "trailing_stop": trailing_stop,
                             "trend_aligned": trend_aligned, "label": label,
                             "session": sess_str, "rsi": rsi, "trend": trend,
-                            "context": context,
                         }
                         recent_signals.append(sig_rec)
 
-                        open_trade_record(symbol, "BUY", entry, sl, trend_aligned, label, sess_str)
+                        open_trade_record(symbol, "BUY", entry, sl, trailing_stop,
+                                          trend_aligned, label, sess_str)
                         active_trade[symbol] = {
                             "type": "BUY", "entry": entry,
-                            "sl": sl, "pip_size": pip_size,
+                            "sl": sl, "trailing_stop": trailing_stop,
                             "trend_aligned": trend_aligned, "label": label,
                             "session": sess_str,
-                            "rsi_alerted": False,
                         }
                         last_signal_time[symbol] = now
-                        last_div_time.setdefault(symbol, {})["BULL"] = bull_candle_dt
 
                 # ── SELL ──
-                if bear and bear_idx is not None:
-                    # Only signal if this is a NEW divergence candle
-                    bear_candle_dt = str(df["datetime"].iloc[bear_idx]) if "datetime" in df.columns else str(bear_idx)
-                    sym_div = last_div_time.setdefault(symbol, {})
-                    if sym_div.get("BEAR") == bear_candle_dt:
-                        bear = False  # same candle, skip
-                    else:
-                        await check_tp(symbol, "SELL", price)
-
-                if bear and bear_idx is not None:
+                if bear:
+                    await check_tp(symbol, "SELL")
                     ds = double_confirm(symbol, "SELL")
 
-                    if ds == "SELL":
+                    if ds == "SELL" and atr_val:
                         entry         = price
-                        sl            = get_sl_sell(df, symbol)
-                        pip_size      = PIP_SIZES.get(symbol, 0.0001)
+                        sl            = round(entry + ATR_SL_MULT * atr_val, 5)
+                        trailing_stop = round(entry + ATR_TS_MULT * atr_val, 5)
                         trend_aligned = (trend == "BEARISH")
                         label         = "Trend Aligned Signal" if trend_aligned else "Counter-Trend Signal"
                         ts            = now.strftime("%Y-%m-%d %H:%M UTC")
-                        context       = get_market_context(symbol, price, rsi, sma200_val, atr_val, trend)
-                        risk_pips     = round((sl - entry) / pip_size, 1)
 
                         tg_msg = (
-                            f"🔴 LTF_(smin) SELL — {symbol}\n"
-                            f"Entry: {entry} | SL: {sl} | Risk: {risk_pips} pips\n"
-                            f"Lot: {LOT_SIZE} | Pip: {pip_size}\n"
+                            f"🔴 LTF_3 min SELL-signal — {symbol}\n"
+                            f"Entry: {entry} | SL: {sl} | TS: {trailing_stop}\n"
                             f"RSI: {rsi} | Trend: {trend} | {label}\n"
-                            f"Session: {sess_str} | {ts}\n"
-                            f"📊 Context: {context}\n"
-                            f"TP1: RSI oversold alert | TP2: Opposite signal"
-                            f"This is the LTF entry signal, confirm first but quick. Is high quality signal when it aligns with htf signal, say a check if there's been a htf signal above, like in the channel"
+                            f"Session: {sess_str} | {ts}"
                         )
                         print(tg_msg)
                         await send_telegram(tg_msg)
 
                         if is_high_quality(trend_aligned):
-                            send_email(f"⭐ HIGH QUALITY SELL — {symbol}", tg_msg)
+                            send_email(
+                                f"⭐ HIGH QUALITY SELL — {symbol}",
+                                tg_msg
+                            )
 
                         sig_rec = {
                             "symbol": symbol, "type": "SELL", "time": ts,
-                            "entry": entry, "sl": sl,
+                            "entry": entry, "sl": sl, "trailing_stop": trailing_stop,
                             "trend_aligned": trend_aligned, "label": label,
                             "session": sess_str, "rsi": rsi, "trend": trend,
-                            "context": context,
                         }
                         recent_signals.append(sig_rec)
 
-                        open_trade_record(symbol, "SELL", entry, sl, trend_aligned, label, sess_str)
+                        open_trade_record(symbol, "SELL", entry, sl, trailing_stop,
+                                          trend_aligned, label, sess_str)
                         active_trade[symbol] = {
                             "type": "SELL", "entry": entry,
-                            "sl": sl, "pip_size": pip_size,
+                            "sl": sl, "trailing_stop": trailing_stop,
                             "trend_aligned": trend_aligned, "label": label,
                             "session": sess_str,
-                            "rsi_alerted": False,
                         }
                         last_signal_time[symbol] = now
-                        last_div_time.setdefault(symbol, {})["BEAR"] = bear_candle_dt
 
             save_state(sess_on, sessions)
             await asyncio.sleep(300)
