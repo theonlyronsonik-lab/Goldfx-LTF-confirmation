@@ -763,7 +763,6 @@ async def main():
                             f"TP1: RSI oversold alert | TP2: Opposite signal"
                             f"This is the LTF entry signal, confirm first but quick. Is high quality signal when it aligns with htf signal, say a check if there's been a htf signal above, like in the channel"
                         )
-                        )
                         print(tg_msg)
                         await send_telegram(tg_msg)
 
