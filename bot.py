@@ -24,7 +24,7 @@ SMTP_USER   = os.getenv("SMTP_USER", "")
 SMTP_PASS   = os.getenv("SMTP_PASS", "")
 ALERT_EMAIL = os.getenv("ALERT_EMAIL", "")
 
-SYMBOLS  = ["XAU/USD", "GBP/USD", "SPY", "QQQ"]
+SYMBOLS  = ["XAU/USD", "GBP/USD", "S&P 500", "EUR/JPY"]
 INTERVAL = "5min"
 
 COOLDOWN_MINUTES = 15
@@ -514,7 +514,7 @@ async def main():
                         ts            = now.strftime("%Y-%m-%d %H:%M UTC")
 
                         tg_msg = (
-                            f"🟢LTF 3 min BUY-signal — {symbol}\n"
+                            f"🟢LTF 5 min BUY-signal — {symbol}\n"
                             f"Entry: {entry} | SL: {sl} | TS: {trailing_stop}\n"
                             f"RSI: {rsi} | Trend: {trend} | {label}\n"
                             f"Session: {sess_str} | {ts}"
@@ -560,7 +560,7 @@ async def main():
                         ts            = now.strftime("%Y-%m-%d %H:%M UTC")
 
                         tg_msg = (
-                            f"🔴 LTF_3 min SELL-signal — {symbol}\n"
+                            f"🔴 LTF_5 min SELL-signal — {symbol}\n"
                             f"Entry: {entry} | SL: {sl} | TS: {trailing_stop}\n"
                             f"RSI: {rsi} | Trend: {trend} | {label}\n"
                             f"Session: {sess_str} | {ts}"
