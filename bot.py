@@ -25,7 +25,7 @@ SMTP_PASS   = os.getenv("SMTP_PASS", "")
 ALERT_EMAIL = os.getenv("ALERT_EMAIL", "")
 
 SYMBOLS  = ["XAU/USD", "GBP/USD", "EUR/JPY"]
-INTERVAL = "3min"
+INTERVAL = "5min"
 
 COOLDOWN_MINUTES = 15
 
