@@ -25,7 +25,7 @@ SMTP_PASS   = os.getenv("SMTP_PASS", "")
 ALERT_EMAIL = os.getenv("ALERT_EMAIL", "")
 
 SYMBOLS  = ["XAU/USD", "GBP/USD", "EUR/JPY"]
-INTERVAL = "5min"
+INTERVAL = "3min"
 
 COOLDOWN_MINUTES = 15
 
@@ -695,13 +695,14 @@ async def main():
                         risk_pips     = round((entry - sl) / pip_size, 1)
 
                         tg_msg = (
-                            f"🟢 BUY — {symbol}\n"
+                            f"🟢 LTF_(5min) . .BUY — {symbol}\n"
                             f"Entry: {entry} | SL: {sl} | Risk: {risk_pips} pips\n"
                             f"Lot: {LOT_SIZE} | Pip: {pip_size}\n"
                             f"RSI: {rsi} | Trend: {trend} | {label}\n"
                             f"Session: {sess_str} | {ts}\n"
                             f"📊 Context: {context}\n"
                             f"TP1: RSI overbought alert | TP2: Opposite signal"
+                            f"This is the LTF entry signal, confirm first but quick. Is high quality signal when it aligns with htf signal, say a check if there's been a htf signal above, like in the channel"
                         )
                         print(tg_msg)
                         await send_telegram(tg_msg)
@@ -753,13 +754,15 @@ async def main():
                         risk_pips     = round((sl - entry) / pip_size, 1)
 
                         tg_msg = (
-                            f"🔴 SELL — {symbol}\n"
+                            f"🔴 LTF_(smin) SELL — {symbol}\n"
                             f"Entry: {entry} | SL: {sl} | Risk: {risk_pips} pips\n"
                             f"Lot: {LOT_SIZE} | Pip: {pip_size}\n"
                             f"RSI: {rsi} | Trend: {trend} | {label}\n"
                             f"Session: {sess_str} | {ts}\n"
                             f"📊 Context: {context}\n"
                             f"TP1: RSI oversold alert | TP2: Opposite signal"
+                            f"This is the LTF entry signal, confirm first but quick. Is high quality signal when it aligns with htf signal, say a check if there's been a htf signal above, like in the channel"
+                        )
                         )
                         print(tg_msg)
                         await send_telegram(tg_msg)
@@ -792,7 +795,7 @@ async def main():
 
         except Exception as e:
             print(f"Runtime error: {e}")
-            await asyncio.sleep(150)
+            await asyncio.sleep(90)
 
 
 if __name__ == "__main__":
