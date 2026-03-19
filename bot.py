@@ -269,7 +269,7 @@ def calc_atr(df, period=14):
 # PIVOTS  (true divergence detection)
 # ─────────────────────────────────────────────
 
-def pivot_low(series, left=5, right=5):
+def pivot_low(series, left=8, right=8):
     pivots = []
     vals   = series.values
     for i in range(left, len(vals) - right):
@@ -279,7 +279,7 @@ def pivot_low(series, left=5, right=5):
     return pivots
 
 
-def pivot_high(series, left=5, right=5):
+def pivot_high(series, left=8, right=8):
     pivots = []
     vals   = series.values
     for i in range(left, len(vals) - right):
