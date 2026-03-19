@@ -460,8 +460,8 @@ async def main():
                 await asyncio.sleep(60)
                 continue
 
-            for symbol in SYMBOLS:
-                    df = get_data(symbol)
+ for symbol in SYMBOLS:
+      df = get_data(symbol)
             
                     if df is None:
                         continue
@@ -476,10 +476,10 @@ async def main():
                 # update last seen candle
                     last_candle_time[symbol] = current_candle_time
 
+ 
                 df["rsi"]   = calc_rsi(df["close"])
                 df["sma200"] = calc_sma200(df["close"])
                 df["atr"]   = calc_atr(df)
-
                 price  = round(df["close"].iloc[-1], 5)
                 rsi    = round(df["rsi"].iloc[-1], 2)
                 sma200 = df["sma200"].iloc[-1]
