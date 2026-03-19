@@ -360,7 +360,7 @@ def calc_atr(df, period=14):
 # PIVOTS
 # ─────────────────────────────────────────────
 
-def pivot_low(series, left=8, right=8):
+def pivot_low(series, left=5, right=5):
     pivots = []
     vals   = series.values
     for i in range(left, len(vals) - right):
@@ -370,7 +370,7 @@ def pivot_low(series, left=8, right=8):
     return pivots
 
 
-def pivot_high(series, left=8, right=8):
+def pivot_high(series, left=5, right=5):
     pivots = []
     vals   = series.values
     for i in range(left, len(vals) - right):
@@ -607,7 +607,7 @@ async def main():
     print(f"Bot started | Symbols: {SYMBOLS}")
 
     await send_telegram(
-        f"🤖 Signal Bot Online\n"
+        f"🤖 LTF Signal Bot Online\n"
         f"Symbols: {', '.join(SYMBOLS)}\n"
         f"Interval: {INTERVAL}\n"
         f"SL: Divergence candle wick\n"
