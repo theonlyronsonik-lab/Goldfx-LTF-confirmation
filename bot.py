@@ -43,9 +43,9 @@ symbol_state     = {}
 
 # Sessions (UTC hour ranges)
 SESSIONS = {
-    "Asia":     (1,  10),
-    "London":   (7,  16),
-    "New York": (13, 22),
+    "Asia":     (5,  10),
+    "London":   (10,  16),
+    "New York": (16, 22),
 }
 
 
