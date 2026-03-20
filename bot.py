@@ -24,7 +24,7 @@ SMTP_USER   = os.getenv("SMTP_USER", "")
 SMTP_PASS   = os.getenv("SMTP_PASS", "")
 ALERT_EMAIL = os.getenv("ALERT_EMAIL", "")
 
-SYMBOLS  = ["XAU/USD", "GBP/USD", "S&P 500", "USD/JPY"]
+SYMBOLS  = ["XAU/USD", "EUR/USD", "NDX", "USD/JPY"]
 INTERVAL = "5min"
 
 COOLDOWN_MINUTES = 15
@@ -37,16 +37,16 @@ SIGNALS_FILE = "signals.json"
 # Symbol-specific SL buffers (applied beyond the 5-candle wick)
 SL_BUFFERS = {
     "XAU/USD": 0.50,
-    "GBP/USD": 0.0003,
-    "S&P 500":     0.10,
+    "EUR/USD": 0.0003,
+    "NDX":     0.10,
     "USD/JPY":     0.10,
 }
 
 # Pip sizes per symbol
 PIP_SIZES = {
     "XAU/USD": 0.1,
-    "GBP/USD": 0.0001,
-    "S&P 500":     0.01,
+    "EUR/USD": 0.0001,
+    "NDX":     0.01,
     "USD/JPY":     0.01,
 }
 
