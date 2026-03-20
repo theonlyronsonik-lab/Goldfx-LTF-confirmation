@@ -24,7 +24,7 @@ SMTP_USER   = os.getenv("SMTP_USER", "")
 SMTP_PASS   = os.getenv("SMTP_PASS", "")
 ALERT_EMAIL = os.getenv("ALERT_EMAIL", "")
 
-SYMBOLS  = ["XAU/USD", "GBP/USD", "S&P 500", "EUR/JPY"]
+SYMBOLS  = ["XAU/USD", "GBP/USD", "S&P 500", "USD/JPY"]
 INTERVAL = "5min"
 
 COOLDOWN_MINUTES = 15
@@ -39,7 +39,7 @@ SL_BUFFERS = {
     "XAU/USD": 0.50,
     "GBP/USD": 0.0003,
     "S&P 500":     0.10,
-    "EUR/JPY":     0.10,
+    "USD/JPY":     0.10,
 }
 
 # Pip sizes per symbol
@@ -47,7 +47,7 @@ PIP_SIZES = {
     "XAU/USD": 0.1,
     "GBP/USD": 0.0001,
     "S&P 500":     0.01,
-    "EUR/JPY":     0.01,
+    "USD/JPY":     0.01,
 }
 
 LOT_SIZE = 0.01  # Default lot size
@@ -64,7 +64,7 @@ last_div_time    = {}   # {symbol: {"BULL": candle_dt_str, "BEAR": candle_dt_str
 SESSIONS = {
     "Asia":     (1,  7),
     "London":   (7,  15),
-    "New York": (15, 21),
+    "New York": (14, 21),
 }
 
 
