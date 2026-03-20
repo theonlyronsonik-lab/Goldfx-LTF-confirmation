@@ -554,7 +554,7 @@ async def check_sl(symbol, price):
     raw_pips = -abs(raw_pips)
     profit   = calc_profit(raw_pips)
     msg = (
-        f"🛑 SL HIT — {symbol}\n"
+        f"🛑 SL HIT for LTF signal— {symbol}\n"
         f"{trade['type']} @ {trade['entry']} | SL: {sl}\n"
         f"Close: {price} | Pips: {raw_pips} | P&L: ${profit}\n"
         f"Session: {trade.get('session', 'N/A')}"
@@ -587,7 +587,7 @@ async def check_tp(symbol, signal, price=None):
     raw_pips = calc_pips(symbol, trade["entry"], price, trade["type"]) if price else 0
     profit   = calc_profit(raw_pips)
     msg = (
-        f"✅ TP HIT (Opposite Signal) — {symbol}\n"
+        f"✅ TP HIT for LTF signal (Opposite Signal) — {symbol}\n"
         f"{closed_type} @ {trade['entry']} → Close: {price}\n"
         f"Pips: {raw_pips} | P&L: ${profit} | Outcome: WIN"
     )
