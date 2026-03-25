@@ -10,7 +10,7 @@ SIGNALS_FILE = "signals.json"
 PIP_SIZES = {
      "XAU/USD": 0.1,
     "EUR/USD": 0.0001,
-    "S&P 500":     0.01,
+    "AUD/CAD":     0.01,
     "CAD/JPY":     0.01,
 }
 
