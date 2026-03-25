@@ -5,7 +5,7 @@ import os
 from flask import Flask, jsonify, request
 from datetime import datetime, timezone
 
-SIGNALS_FILE = "signals.json"
+SIGNALS_FILE = "/app/data/signals.json"
 
 PIP_SIZES = {
      "XAU/USD": 0.1,
