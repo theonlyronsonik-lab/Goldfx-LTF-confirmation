@@ -5,6 +5,7 @@ import os
 import json
 import asyncio
 import smtplib
+import time
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta, timezone
 from telegram import Bot
@@ -312,20 +313,61 @@ def is_high_quality(trend_aligned):
 def get_data(symbol):
     url = (f"https://api.twelvedata.com/time_series"
            f"?symbol={symbol}&interval={INTERVAL}&outputsize=210&apikey={API_KEY}")
-    try:
-        r = requests.get(url, timeout=15).json()
-    except Exception as e:
-        print(f"Fetch error {symbol}: {e}")
-        return None
 
-    if "values" not in r:
-        print(f"No data for {symbol}: {r.get('message', '')}")
-        return None
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        try:
+            resp = requests.get(url, timeout=(10, 30))
+            r = resp.json()
+        except requests.exceptions.Timeout as e:
+            print(f"[{symbol}] Timeout on attempt {attempt}/{max_retries}: {e}")
+            if attempt < max_retries:
+                time.sleep(2 ** (attempt - 1))
+                continue
+            print(f"[{symbol}] All {max_retries} attempts timed out, skipping symbol")
+            return None
+        except ValueError as e:
+            # JSON decode error — API returned empty/invalid body
+            print(f"[{symbol}] JSON parse error on attempt {attempt}/{max_retries}: {e}")
+            if attempt < max_retries:
+                time.sleep(2 ** (attempt - 1))
+                continue
+            print(f"[{symbol}] All {max_retries} attempts returned invalid JSON, skipping symbol")
+            return None
+        except requests.exceptions.RequestException as e:
+            print(f"[{symbol}] Network error on attempt {attempt}/{max_retries}: {e}")
+            if attempt < max_retries:
+                time.sleep(2 ** (attempt - 1))
+                continue
+            print(f"[{symbol}] All {max_retries} attempts failed with network error, skipping symbol")
+            return None
 
-    df = pd.DataFrame(r["values"]).iloc[::-1].reset_index(drop=True)
-    for c in ["open", "high", "low", "close"]:
-        df[c] = df[c].astype(float)
-    return df
+        if "values" not in r:
+            # API-level error (bad key, rate limit, unknown symbol, etc.) — no point retrying
+            print(f"[{symbol}] API error (no values): {r.get('message', r.get('status', 'unknown error'))}")
+            return None
+
+        df = pd.DataFrame(r["values"]).iloc[::-1].reset_index(drop=True)
+        for c in ["open", "high", "low", "close"]:
+            df[c] = df[c].astype(float)
+
+        # ── Data validation ──────────────────────────────────────────────
+        if len(df) < 200:
+            print(f"[{symbol}] Insufficient candles: got {len(df)}, need at least 200 — skipping")
+            return None
+
+        ohlc_cols = ["open", "high", "low", "close"]
+        if df[ohlc_cols].isnull().any().any():
+            print(f"[{symbol}] OHLC data contains NaN values — skipping")
+            return None
+
+        if (df[ohlc_cols] == 0).any().any():
+            print(f"[{symbol}] OHLC data contains zero values — skipping")
+            return None
+
+        return df
+
+    return None
 
 
 # ─────────────────────────────────────────────
@@ -669,6 +711,11 @@ async def main():
 
                 now = datetime.now(timezone.utc)
 
+                if bull and bull_idx is not None:
+                    print(f"[{symbol}] Bullish divergence detected at candle index {bull_idx} | RSI: {rsi:.2f} | Price: {price}")
+                if bear and bear_idx is not None:
+                    print(f"[{symbol}] Bearish divergence detected at candle index {bear_idx} | RSI: {rsi:.2f} | Price: {price}")
+
                 # If there's already an active trade, skip new signal generation
                 if symbol in active_trade:
                     continue
@@ -680,11 +727,13 @@ async def main():
                     sym_div = last_div_time.setdefault(symbol, {})
                     if sym_div.get("BULL") == bull_candle_dt:
                         bull = False  # same candle, skip
+                        print(f"[{symbol}] Bullish divergence already signalled for candle {bull_candle_dt}, skipping")
                     else:
                         await check_tp(symbol, "BUY", price)
 
                 if bull and bull_idx is not None:
                     ds = double_confirm(symbol, "BUY")
+                    print(f"[{symbol}] BUY double-confirm stack: {signal_stack.get(symbol, [])} → result: {ds}")
 
                     if ds == "BUY":
                         entry         = price
@@ -696,6 +745,8 @@ async def main():
                         context       = get_market_context(symbol, price, rsi, sma200_val, atr_val, trend)
                         risk_pips     = round((entry - sl) / pip_size, 1)
 
+                        print(f"[{symbol}] Opening BUY trade | Entry: {entry} | SL: {sl} | Risk: {risk_pips} pips | {label}")
+
                         tg_msg = (
                             f"🟢LTF BUY — {symbol}\n"
                             f"Entry: {entry} | SL: {sl} | Risk: {risk_pips} pips\n"
@@ -706,7 +757,9 @@ async def main():
                             f"TP1: RSI overbought alert | TP2: Opposite signal"
                         )
                         print(tg_msg)
+                        print(f"[{symbol}] Sending BUY signal to Telegram…")
                         await send_telegram(tg_msg)
+                        print(f"[{symbol}] Telegram BUY signal sent")
 
                         if is_high_quality(trend_aligned):
                             send_email(f"⭐ HIGH QUALITY BUY — {symbol}", tg_msg)
@@ -738,11 +791,13 @@ async def main():
                     sym_div = last_div_time.setdefault(symbol, {})
                     if sym_div.get("BEAR") == bear_candle_dt:
                         bear = False  # same candle, skip
+                        print(f"[{symbol}] Bearish divergence already signalled for candle {bear_candle_dt}, skipping")
                     else:
                         await check_tp(symbol, "SELL", price)
 
                 if bear and bear_idx is not None:
                     ds = double_confirm(symbol, "SELL")
+                    print(f"[{symbol}] SELL double-confirm stack: {signal_stack.get(symbol, [])} → result: {ds}")
 
                     if ds == "SELL":
                         entry         = price
@@ -754,6 +809,8 @@ async def main():
                         context       = get_market_context(symbol, price, rsi, sma200_val, atr_val, trend)
                         risk_pips     = round((sl - entry) / pip_size, 1)
 
+                        print(f"[{symbol}] Opening SELL trade | Entry: {entry} | SL: {sl} | Risk: {risk_pips} pips | {label}")
+
                         tg_msg = (
                             f"🔴LTF_ SELL — {symbol}\n"
                             f"Entry: {entry} | SL: {sl} | Risk: {risk_pips} pips\n"
@@ -764,7 +821,9 @@ async def main():
                             f"TP1: RSI oversold alert | TP2: Opposite signal"
                         )
                         print(tg_msg)
+                        print(f"[{symbol}] Sending SELL signal to Telegram…")
                         await send_telegram(tg_msg)
+                        print(f"[{symbol}] Telegram SELL signal sent")
 
                         if is_high_quality(trend_aligned):
                             send_email(f"⭐ HIGH QUALITY SELL — {symbol}", tg_msg)
