@@ -33,7 +33,9 @@ COOLDOWN_MINUTES = 15
 RSI_OVERBOUGHT = 70
 RSI_OVERSOLD   = 30
 
-SIGNALS_FILE = "signals.json"
+DATA_DIR = "/app/data"
+os.makedirs(DATA_DIR, exist_ok=True)
+SIGNALS_FILE = os.path.join(DATA_DIR, "signals.json")
 
 # Symbol-specific SL buffers (applied beyond the 5-candle wick)
 SL_BUFFERS = {

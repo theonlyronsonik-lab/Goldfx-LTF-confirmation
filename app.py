@@ -6,6 +6,7 @@ import os
 from flask import Flask, jsonify, request
 from datetime import datetime, timezone
 
+SIGNALS_FILE = "/app/data/signals.json"
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
