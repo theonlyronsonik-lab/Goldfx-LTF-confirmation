@@ -67,9 +67,9 @@ symbol_state     = {}
 last_div_time    = {}   # {symbol: {"BULL": candle_dt_str, "BEAR": candle_dt_str}}
 
 SESSIONS = {
-    "Asia":     (22,  7),
+    "Asia":     (0,  7),
     "London":   (7,  15),
-    "New York": (14, 21),
+    "New York": (14, 20),
 }
 
 
