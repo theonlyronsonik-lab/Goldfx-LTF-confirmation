@@ -55,9 +55,9 @@ symbol_state     = {}
 last_div_time    = {}
 
 SESSIONS = {
-    "Asia":      (0,  7),
-    "London":    (7,  15),
-    "New York": (14, 20),
+    "Asia":      (2,  7),
+    "London":    (7,  13),
+    "New York": (13, 19),
 }
 
 # ─────────────────────────────────────────────
