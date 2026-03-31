@@ -78,6 +78,17 @@ def load_state():
     except Exception as e: print(f"Load error: {e}")
 
 def save_state(session_on, current_sessions):
+    global recent_signals
+    # Re-read signals from disk first so we don't restore signals that
+    # app.py already cleared via /execute_signal
+    try:
+        if os.path.exists(SIGNALS_FILE):
+            with open(SIGNALS_FILE, "r") as f:
+                on_disk = json.load(f)
+            recent_signals = on_disk.get("recent_signals", recent_signals)
+    except Exception as e:
+        print(f"Pre-save read error: {e}")
+
     data = {
         "bot_status": "running",
         "last_scan": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
@@ -96,6 +107,7 @@ def save_state(session_on, current_sessions):
     try:
         with open(SIGNALS_FILE, "w") as f:
             json.dump(data, f, indent=2)
+        print(f"State saved to {SIGNALS_FILE} ({len(recent_signals)} pending signals)")
     except Exception as e: print(f"Save error: {e}")
 
 def get_active_sessions():
@@ -200,6 +212,7 @@ async def main():
             sess_on = sessions != ["Off-Hours"]
             
             if not sess_on:
+                save_state(sess_on, sessions)
                 await asyncio.sleep(60); continue
 
             for symbol in SYMBOLS:
