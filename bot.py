@@ -223,13 +223,43 @@ async def main():
 
                 if bull and double_confirm(symbol, "BUY") == "BUY":
                     sl = get_sl_buy(df, symbol)
-                    sig = {"symbol": symbol, "type": "BUY", "entry": price, "sl": sl, "time": datetime.now().strftime("%H:%M")}
+                    pip_size = PIP_SIZES.get(symbol, 0.0001)
+                    risk_pips = round((price - sl) / pip_size, 1)
+                    sig = {
+                        "symbol": symbol,
+                        "type": "BUY",
+                        "entry": price,
+                        "sl": sl,
+                        "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+                        "risk_pips": risk_pips,
+                        "trend_aligned": (trend == "BULLISH"),
+                        "label": "Trend Aligned Signal" if trend == "BULLISH" else "Counter-Trend Signal",
+                        "session": " / ".join(sessions),
+                        "rsi": rsi,
+                        "trend": trend,
+                        "context": f"RSI: {rsi}, Trend: {trend}",
+                    }
                     recent_signals.append(sig)
                     await send_telegram(f"🟢 BUY {symbol} @ {price}\nSL: {sl}")
 
                 elif bear and double_confirm(symbol, "SELL") == "SELL":
                     sl = get_sl_sell(df, symbol)
-                    sig = {"symbol": symbol, "type": "SELL", "entry": price, "sl": sl, "time": datetime.now().strftime("%H:%M")}
+                    pip_size = PIP_SIZES.get(symbol, 0.0001)
+                    risk_pips = round((sl - price) / pip_size, 1)
+                    sig = {
+                        "symbol": symbol,
+                        "type": "SELL",
+                        "entry": price,
+                        "sl": sl,
+                        "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+                        "risk_pips": risk_pips,
+                        "trend_aligned": (trend == "BEARISH"),
+                        "label": "Trend Aligned Signal" if trend == "BEARISH" else "Counter-Trend Signal",
+                        "session": " / ".join(sessions),
+                        "rsi": rsi,
+                        "trend": trend,
+                        "context": f"RSI: {rsi}, Trend: {trend}",
+                    }
                     recent_signals.append(sig)
                     await send_telegram(f"🔴 SELL {symbol} @ {price}\nSL: {sl}")
 
