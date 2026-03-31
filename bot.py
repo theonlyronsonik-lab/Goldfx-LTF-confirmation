@@ -266,7 +266,7 @@ async def main():
             save_state(sess_on, sessions)
             await asyncio.sleep(300)
         except Exception as e:
-            print(f"Error: {e}"); await asyncio.sleep(60)
+            print(f"Error: {e}"); await asyncio.sleep(150)
 
 if __name__ == "__main__":
     asyncio.run(main())
