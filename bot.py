@@ -855,7 +855,7 @@ async def main():
 
         except Exception as e:
             print(f"Runtime error: {e}")
-            await asyncio.sleep(60)
+            await asyncio.sleep(150)
 
 
 if __name__ == "__main__":
