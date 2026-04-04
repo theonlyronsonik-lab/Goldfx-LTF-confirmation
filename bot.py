@@ -15,7 +15,8 @@ from telegram.error import TelegramError
 # CONFIG
 # ─────────────────────────────────────────────
 
-API_KEY = os.getenv("API_KEY", "")
+API_KEY   = os.getenv("API_KEY", "")
+API_KEY_2 = os.getenv("API_KEY_2", "")
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 CHAT_ID   = os.getenv("CHAT_ID", "")
 
@@ -65,6 +66,7 @@ recent_signals   = []
 trades_history   = []
 symbol_state     = {}
 last_div_time    = {}   # {symbol: {"BULL": candle_dt_str, "BEAR": candle_dt_str}}
+active_api_key   = API_KEY  # Tracks which API key is currently in use
 
 SESSIONS = {
     "Asia":     (0,  7),
@@ -313,11 +315,27 @@ def is_high_quality(trend_aligned):
 # ─────────────────────────────────────────────
 
 def get_data(symbol):
-    url = (f"https://api.twelvedata.com/time_series"
-           f"?symbol={symbol}&interval={INTERVAL}&outputsize=210&apikey={API_KEY}")
+    global active_api_key
+
+    def _is_rate_limited(resp, r):
+        if resp.status_code == 429:
+            return True
+        msg = str(r.get("message", "")).lower() + str(r.get("status", "")).lower()
+        return "rate limit" in msg or "too many" in msg
+
+    def _switch_key():
+        global active_api_key
+        other = API_KEY_2 if active_api_key == API_KEY else API_KEY
+        if other:
+            print(f"[API] Rate limit hit on current key — switching to {'API_KEY_2' if other == API_KEY_2 else 'API_KEY'}")
+            active_api_key = other
+            return True
+        return False
 
     max_retries = 3
     for attempt in range(1, max_retries + 1):
+        url = (f"https://api.twelvedata.com/time_series"
+               f"?symbol={symbol}&interval={INTERVAL}&outputsize=210&apikey={active_api_key}")
         try:
             resp = requests.get(url, timeout=(10, 30))
             r = resp.json()
@@ -344,8 +362,15 @@ def get_data(symbol):
             print(f"[{symbol}] All {max_retries} attempts failed with network error, skipping symbol")
             return None
 
+        # Rate-limit detected — try switching to the other API key and retry immediately
+        if _is_rate_limited(resp, r):
+            if _switch_key():
+                continue  # retry with the new key (does not consume an extra attempt)
+            print(f"[{symbol}] Rate limited and no fallback key available, skipping symbol")
+            return None
+
         if "values" not in r:
-            # API-level error (bad key, rate limit, unknown symbol, etc.) — no point retrying
+            # API-level error (bad key, unknown symbol, etc.) — no point retrying
             print(f"[{symbol}] API error (no values): {r.get('message', r.get('status', 'unknown error'))}")
             return None
 
@@ -488,16 +513,9 @@ def bearish_div(df):
 # ─────────────────────────────────────────────
 
 def double_confirm(symbol, signal):
-    if symbol not in signal_stack:
-        signal_stack[symbol] = []
-    signal_stack[symbol].append(signal)
-    if len(signal_stack[symbol]) > 2:
-        signal_stack[symbol].pop(0)
-    if signal_stack[symbol] == ["BUY", "BUY"]:
-        return "BUY"
-    if signal_stack[symbol] == ["SELL", "SELL"]:
-        return "SELL"
-    return None
+    # Return signal immediately on first detection — no second confirmation required
+    signal_stack[symbol] = [signal]
+    return signal
 
 
 # ─────────────────────────────────────────────
