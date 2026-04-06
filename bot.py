@@ -26,10 +26,10 @@ SMTP_USER   = os.getenv("SMTP_USER", "")
 SMTP_PASS   = os.getenv("SMTP_PASS", "")
 ALERT_EMAIL = os.getenv("ALERT_EMAIL", "")
 
-SYMBOLS  = ["XAU/USD", "EUR/USD", "AUD/CAD", "CAD/JPY", "EUR/JPY"]
-INTERVAL = "5min"
+SYMBOLS  = ["XAU/USD", "EUR/USD", "EUR/JPY", "GBP/USD" , "GBP/JPY"]
+INTERVAL = "1min"
 
-COOLDOWN_MINUTES = 15
+COOLDOWN_MINUTES = 5
 
 RSI_OVERBOUGHT = 70
 RSI_OVERSOLD   = 30
@@ -976,11 +976,11 @@ async def main():
                         last_div_time.setdefault(symbol, {})["BEAR"] = bear_candle_dt
 
             save_state(sess_on, sessions)
-            await asyncio.sleep(300)
+            await asyncio.sleep(30)
 
         except Exception as e:
             print(f"Runtime error: {e}")
-            await asyncio.sleep(150)
+            await asyncio.sleep(60)
 
 
 if __name__ == "__main__":
