@@ -484,28 +484,131 @@ def calc_profit(pips, lot_size=None):
 # DIVERGENCE
 # ─────────────────────────────────────────────
 
+# TradingView indicator parameters
+_LBL        = 5   # pivot left lookback
+_LBR        = 5   # pivot right lookback
+_RANGE_LO   = 5   # min bars between pivots
+_RANGE_HI   = 60  # max bars between pivots
+
+
+def _find_pivot_lows(series, lbL=_LBL, lbR=_LBR):
+    """
+    Replicates ta.pivotlow(osc, lbL, lbR).
+    Returns list of indices where a confirmed pivot low exists.
+    A pivot low at index i is confirmed once bar i+lbR has closed,
+    so the pivot is placed at i (not at the confirmation bar).
+    """
+    vals = series.values
+    n    = len(vals)
+    pivots = []
+    for i in range(lbL, n - lbR):
+        window = vals[i - lbL: i + lbR + 1]
+        if vals[i] == np.min(window) and vals[i] < np.min(np.delete(window, lbL)):
+            pivots.append(i)
+    return pivots
+
+
+def _find_pivot_highs(series, lbL=_LBL, lbR=_LBR):
+    """
+    Replicates ta.pivothigh(osc, lbL, lbR).
+    Returns list of indices where a confirmed pivot high exists.
+    """
+    vals = series.values
+    n    = len(vals)
+    pivots = []
+    for i in range(lbL, n - lbR):
+        window = vals[i - lbL: i + lbR + 1]
+        if vals[i] == np.max(window) and vals[i] > np.max(np.delete(window, lbL)):
+            pivots.append(i)
+    return pivots
+
+
 def bullish_div(df):
-    lows = pivot_low(df["low"])
-    if len(lows) < 2:
-        return False, None
-    i1, i2 = lows[-2], lows[-1]
-    price_ll = df["low"].iloc[i2] < df["low"].iloc[i1]
-    rsi_hl   = df["rsi"].iloc[i2] > df["rsi"].iloc[i1]
-    if price_ll and rsi_hl:
-        return True, i2
-    return False, None
+    """
+    Detects Regular Bullish and Hidden Bullish divergences on RSI pivot lows,
+    matching the TradingView Divergence Indicator logic exactly.
+
+    Regular Bullish : Price Lower Low  + RSI Higher Low  → reversal signal
+    Hidden  Bullish : Price Higher Low + RSI Lower Low   → continuation signal
+
+    Returns (detected: bool, divergence_type: str | None, candle_index: int | None)
+    """
+    rsi_pivots   = _find_pivot_lows(df["rsi"])
+    price_series = df["low"]
+
+    if len(rsi_pivots) < 2:
+        return False, None, None
+
+    # Current (most-recent) RSI pivot low
+    cur_idx = rsi_pivots[-1]
+
+    # Search backwards through previous pivots for one within the bar-range window
+    for prev_idx in reversed(rsi_pivots[:-1]):
+        bars_between = cur_idx - prev_idx
+        if bars_between < _RANGE_LO or bars_between > _RANGE_HI:
+            continue
+
+        cur_rsi   = df["rsi"].iloc[cur_idx]
+        prev_rsi  = df["rsi"].iloc[prev_idx]
+        cur_price = price_series.iloc[cur_idx]
+        prev_price = price_series.iloc[prev_idx]
+
+        # Regular Bullish: Price LL + RSI HL
+        if cur_price < prev_price and cur_rsi > prev_rsi:
+            return True, "Regular Bullish", cur_idx
+
+        # Hidden Bullish: Price HL + RSI LL
+        if cur_price > prev_price and cur_rsi < prev_rsi:
+            return True, "Hidden Bullish", cur_idx
+
+        # Only compare the nearest valid pivot
+        break
+
+    return False, None, None
 
 
 def bearish_div(df):
-    highs = pivot_high(df["high"])
-    if len(highs) < 2:
-        return False, None
-    i1, i2 = highs[-2], highs[-1]
-    price_hh = df["high"].iloc[i2] > df["high"].iloc[i1]
-    rsi_lh   = df["rsi"].iloc[i2]  < df["rsi"].iloc[i1]
-    if price_hh and rsi_lh:
-        return True, i2
-    return False, None
+    """
+    Detects Regular Bearish and Hidden Bearish divergences on RSI pivot highs,
+    matching the TradingView Divergence Indicator logic exactly.
+
+    Regular Bearish : Price Higher High + RSI Lower High  → reversal signal
+    Hidden  Bearish : Price Lower High  + RSI Higher High → continuation signal
+
+    Returns (detected: bool, divergence_type: str | None, candle_index: int | None)
+    """
+    rsi_pivots   = _find_pivot_highs(df["rsi"])
+    price_series = df["high"]
+
+    if len(rsi_pivots) < 2:
+        return False, None, None
+
+    # Current (most-recent) RSI pivot high
+    cur_idx = rsi_pivots[-1]
+
+    # Search backwards through previous pivots for one within the bar-range window
+    for prev_idx in reversed(rsi_pivots[:-1]):
+        bars_between = cur_idx - prev_idx
+        if bars_between < _RANGE_LO or bars_between > _RANGE_HI:
+            continue
+
+        cur_rsi    = df["rsi"].iloc[cur_idx]
+        prev_rsi   = df["rsi"].iloc[prev_idx]
+        cur_price  = price_series.iloc[cur_idx]
+        prev_price = price_series.iloc[prev_idx]
+
+        # Regular Bearish: Price HH + RSI LH
+        if cur_price > prev_price and cur_rsi < prev_rsi:
+            return True, "Regular Bearish", cur_idx
+
+        # Hidden Bearish: Price LH + RSI HH
+        if cur_price < prev_price and cur_rsi > prev_rsi:
+            return True, "Hidden Bearish", cur_idx
+
+        # Only compare the nearest valid pivot
+        break
+
+    return False, None, None
 
 
 # ─────────────────────────────────────────────
@@ -726,15 +829,15 @@ async def main():
                 # Check if SL has been hit by current price
                 await check_sl(symbol, price)
 
-                bull, bull_idx = bullish_div(df)
-                bear, bear_idx = bearish_div(df)
+                bull, bull_div_type, bull_idx = bullish_div(df)
+                bear, bear_div_type, bear_idx = bearish_div(df)
 
                 now = datetime.now(timezone.utc)
 
                 if bull and bull_idx is not None:
-                    print(f"[{symbol}] Bullish divergence detected at candle index {bull_idx} | RSI: {rsi:.2f} | Price: {price}")
+                    print(f"[{symbol}] Bullish divergence ({bull_div_type}) detected at candle index {bull_idx} | RSI: {rsi:.2f} | Price: {price}")
                 if bear and bear_idx is not None:
-                    print(f"[{symbol}] Bearish divergence detected at candle index {bear_idx} | RSI: {rsi:.2f} | Price: {price}")
+                    print(f"[{symbol}] Bearish divergence ({bear_div_type}) detected at candle index {bear_idx} | RSI: {rsi:.2f} | Price: {price}")
 
                 # If there's already an active trade, skip new signal generation
                 if symbol in active_trade:
@@ -769,6 +872,7 @@ async def main():
 
                         tg_msg = (
                             f"🟢LTF BUY — {symbol}\n"
+                            f"Divergence: {bull_div_type}\n"
                             f"Entry: {entry} | SL: {sl} | Risk: {risk_pips} pips\n"
                             f"Lot: {LOT_SIZE} | Pip: {pip_size}\n"
                             f"RSI: {rsi} | Trend: {trend} | {label}\n"
@@ -790,6 +894,7 @@ async def main():
                             "trend_aligned": trend_aligned, "label": label,
                             "session": sess_str, "rsi": rsi, "trend": trend,
                             "context": context,
+                            "divergence_type": bull_div_type,
                         }
                         recent_signals.append(sig_rec)
 
@@ -833,6 +938,7 @@ async def main():
 
                         tg_msg = (
                             f"🔴LTF_ SELL — {symbol}\n"
+                            f"Divergence: {bear_div_type}\n"
                             f"Entry: {entry} | SL: {sl} | Risk: {risk_pips} pips\n"
                             f"Lot: {LOT_SIZE} | Pip: {pip_size}\n"
                             f"RSI: {rsi} | Trend: {trend} | {label}\n"
@@ -854,6 +960,7 @@ async def main():
                             "trend_aligned": trend_aligned, "label": label,
                             "session": sess_str, "rsi": rsi, "trend": trend,
                             "context": context,
+                            "divergence_type": bear_div_type,
                         }
                         recent_signals.append(sig_rec)
 
