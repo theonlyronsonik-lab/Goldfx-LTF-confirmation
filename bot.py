@@ -27,9 +27,9 @@ SMTP_PASS   = os.getenv("SMTP_PASS", "")
 ALERT_EMAIL = os.getenv("ALERT_EMAIL", "")
 
 SYMBOLS  = ["XAU/USD", "EUR/USD", "EUR/JPY", "GBP/USD" , "GBP/JPY"]
-INTERVAL = "1min"
+INTERVAL = "5min"
 
-COOLDOWN_MINUTES = 5
+COOLDOWN_MINUTES = 10
 
 RSI_OVERBOUGHT = 70
 RSI_OVERSOLD   = 30
@@ -987,7 +987,7 @@ async def main():
                         last_div_time.setdefault(symbol, {})["BEAR"] = str(bear_idx)
 
             save_state(sess_on, sessions)
-            await asyncio.sleep(180)
+            await asyncio.sleep(300)
 
         except Exception as e:
             print(f"Runtime error: {e}")
