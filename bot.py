@@ -66,6 +66,7 @@ recent_signals   = []
 trades_history   = []
 symbol_state     = {}
 last_div_time    = {}   # {symbol: {"BULL": candle_dt_str, "BEAR": candle_dt_str}}
+last_processed_divergence = {}  # {symbol: {"bull_idx": idx, "bear_idx": idx}}
 active_api_key   = API_KEY  # Tracks which API key is currently in use
 
 SESSIONS = {
@@ -503,7 +504,7 @@ def _find_pivot_lows(series, lbL=_LBL, lbR=_LBR):
     pivots = []
     for i in range(lbL, n - lbR):
         window = vals[i - lbL: i + lbR + 1]
-        if vals[i] == np.min(window) and vals[i] < np.min(np.delete(window, lbL)):
+        if vals[i] == np.min(window):
             pivots.append(i)
     return pivots
 
@@ -518,7 +519,7 @@ def _find_pivot_highs(series, lbL=_LBL, lbR=_LBR):
     pivots = []
     for i in range(lbL, n - lbR):
         window = vals[i - lbL: i + lbR + 1]
-        if vals[i] == np.max(window) and vals[i] > np.max(np.delete(window, lbL)):
+        if vals[i] == np.max(window):
             pivots.append(i)
     return pivots
 
@@ -542,8 +543,13 @@ def bullish_div(df):
     # Current (most-recent) RSI pivot low
     cur_idx = rsi_pivots[-1]
 
+    if cur_idx < 0 or cur_idx >= len(df):
+        return False, None, None
+
     # Search backwards through previous pivots for one within the bar-range window
     for prev_idx in reversed(rsi_pivots[:-1]):
+        if prev_idx < 0 or prev_idx >= len(df):
+            continue
         bars_between = cur_idx - prev_idx
         if bars_between < _RANGE_LO or bars_between > _RANGE_HI:
             continue
@@ -586,8 +592,13 @@ def bearish_div(df):
     # Current (most-recent) RSI pivot high
     cur_idx = rsi_pivots[-1]
 
+    if cur_idx < 0 or cur_idx >= len(df):
+        return False, None, None
+
     # Search backwards through previous pivots for one within the bar-range window
     for prev_idx in reversed(rsi_pivots[:-1]):
+        if prev_idx < 0 or prev_idx >= len(df):
+            continue
         bars_between = cur_idx - prev_idx
         if bars_between < _RANGE_LO or bars_between > _RANGE_HI:
             continue
@@ -804,7 +815,7 @@ async def main():
                 df["sma200"] = calc_sma200(df["close"])
                 df["atr"]    = calc_atr(df)
 
-                price   = round(df["close"].iloc[-2], 5)
+                price   = round(df["close"].iloc[-1], 5)
                 rsi     = round(df["rsi"].iloc[-1], 2)
                 sma200  = df["sma200"].iloc[-1]
                 atr     = df["atr"].iloc[-1]
@@ -845,14 +856,13 @@ async def main():
 
                 # ── BUY ──
                 if bull and bull_idx is not None:
-                    # Only signal if this is a NEW divergence candle (not same one as last signal)
-                    bull_candle_dt = str(df["datetime"].iloc[bull_idx]) if "datetime" in df.columns else str(bull_idx)
-                    sym_div = last_div_time.setdefault(symbol, {})
-                    if sym_div.get("BULL") == bull_candle_dt:
-                        bull = False  # same candle, skip
-                        print(f"[{symbol}] Bullish divergence already signalled for candle {bull_candle_dt}, skipping")
-                    else:
+                    # Only trigger if this is a NEW divergence (different index than last time)
+                    if symbol not in last_processed_divergence or \
+                            last_processed_divergence[symbol].get("bull_idx") != bull_idx:
                         await check_tp(symbol, "BUY", price)
+                    else:
+                        bull = False  # same divergence index, skip
+                        print(f"[{symbol}] Bullish divergence already signalled for index {bull_idx}, skipping")
 
                 if bull and bull_idx is not None:
                     ds = double_confirm(symbol, "BUY")
@@ -864,7 +874,7 @@ async def main():
                         pip_size      = PIP_SIZES.get(symbol, 0.0001)
                         trend_aligned = (trend == "BULLISH")
                         label         = "Trend Aligned Signal" if trend_aligned else "Counter-Trend Signal"
-                        ts            = now.strftime("%Y-%m-%d %H:%M UTC")
+                        ts            = now.strftime("%Y-%m-%d %H:%M:%S UTC")
                         context       = get_market_context(symbol, price, rsi, sma200_val, atr_val, trend)
                         risk_pips     = round((entry - sl) / pip_size, 1)
 
@@ -907,18 +917,18 @@ async def main():
                             "rsi_alerted": False,
                         }
                         last_signal_time[symbol] = now
-                        last_div_time.setdefault(symbol, {})["BULL"] = bull_candle_dt
+                        last_processed_divergence.setdefault(symbol, {})["bull_idx"] = bull_idx
+                        last_div_time.setdefault(symbol, {})["BULL"] = str(bull_idx)
 
                 # ── SELL ──
                 if bear and bear_idx is not None:
-                    # Only signal if this is a NEW divergence candle
-                    bear_candle_dt = str(df["datetime"].iloc[bear_idx]) if "datetime" in df.columns else str(bear_idx)
-                    sym_div = last_div_time.setdefault(symbol, {})
-                    if sym_div.get("BEAR") == bear_candle_dt:
-                        bear = False  # same candle, skip
-                        print(f"[{symbol}] Bearish divergence already signalled for candle {bear_candle_dt}, skipping")
-                    else:
+                    # Only trigger if this is a NEW divergence (different index than last time)
+                    if symbol not in last_processed_divergence or \
+                            last_processed_divergence[symbol].get("bear_idx") != bear_idx:
                         await check_tp(symbol, "SELL", price)
+                    else:
+                        bear = False  # same divergence index, skip
+                        print(f"[{symbol}] Bearish divergence already signalled for index {bear_idx}, skipping")
 
                 if bear and bear_idx is not None:
                     ds = double_confirm(symbol, "SELL")
@@ -930,7 +940,7 @@ async def main():
                         pip_size      = PIP_SIZES.get(symbol, 0.0001)
                         trend_aligned = (trend == "BEARISH")
                         label         = "Trend Aligned Signal" if trend_aligned else "Counter-Trend Signal"
-                        ts            = now.strftime("%Y-%m-%d %H:%M UTC")
+                        ts            = now.strftime("%Y-%m-%d %H:%M:%S UTC")
                         context       = get_market_context(symbol, price, rsi, sma200_val, atr_val, trend)
                         risk_pips     = round((sl - entry) / pip_size, 1)
 
@@ -973,7 +983,8 @@ async def main():
                             "rsi_alerted": False,
                         }
                         last_signal_time[symbol] = now
-                        last_div_time.setdefault(symbol, {})["BEAR"] = bear_candle_dt
+                        last_processed_divergence.setdefault(symbol, {})["bear_idx"] = bear_idx
+                        last_div_time.setdefault(symbol, {})["BEAR"] = str(bear_idx)
 
             save_state(sess_on, sessions)
             await asyncio.sleep(300)
