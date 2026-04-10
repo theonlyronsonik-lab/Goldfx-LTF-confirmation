@@ -906,7 +906,14 @@ async def main():
                             "context": context,
                             "divergence_type": bull_div_type,
                         }
-                        recent_signals.append(sig_rec)
+                        recent_signals.append({
+                            "symbol": symbol,
+                            "type": "BUY",
+                            "price": entry,
+                            "sl": sl,
+                            "time": ts,
+                            "divergence_type": bull_div_type,
+                        })
 
                         open_trade_record(symbol, "BUY", entry, sl, trend_aligned, label, sess_str)
                         active_trade[symbol] = {
@@ -972,7 +979,14 @@ async def main():
                             "context": context,
                             "divergence_type": bear_div_type,
                         }
-                        recent_signals.append(sig_rec)
+                        recent_signals.append({
+                            "symbol": symbol,
+                            "type": "SELL",
+                            "price": entry,
+                            "sl": sl,
+                            "time": ts,
+                            "divergence_type": bear_div_type,
+                        })
 
                         open_trade_record(symbol, "SELL", entry, sl, trend_aligned, label, sess_str)
                         active_trade[symbol] = {
