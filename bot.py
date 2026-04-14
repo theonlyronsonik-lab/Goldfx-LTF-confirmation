@@ -987,7 +987,7 @@ async def main():
                         last_div_time.setdefault(symbol, {})["BEAR"] = str(bear_idx)
 
             save_state(sess_on, sessions)
-            await asyncio.sleep(200)
+            await asyncio.sleep(300)
 
         except Exception as e:
             print(f"Runtime error: {e}")
