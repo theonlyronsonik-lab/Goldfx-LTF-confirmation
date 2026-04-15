@@ -26,7 +26,7 @@ SMTP_USER   = os.getenv("SMTP_USER", "")
 SMTP_PASS   = os.getenv("SMTP_PASS", "")
 ALERT_EMAIL = os.getenv("ALERT_EMAIL", "")
 
-SYMBOLS  = ["XAU/USD", "EUR/USD", "EUR/JPY", "GBP/USD" , "GBP/JPY"]
+SYMBOLS  = ["XAU/USD", "EUR/USD", "NDX", "GBP/USD" , "GBP/JPY"]
 INTERVAL = "5min"
 
 COOLDOWN_MINUTES = 15
@@ -991,7 +991,7 @@ async def main():
 
         except Exception as e:
             print(f"Runtime error: {e}")
-            await asyncio.sleep(150)
+            await asyncio.sleep(180)
 
 
 if __name__ == "__main__":
