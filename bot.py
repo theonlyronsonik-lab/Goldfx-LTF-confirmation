@@ -42,16 +42,16 @@ SIGNALS_FILE = os.path.join(DATA_DIR, "signals.json")
 SL_BUFFERS = {
     "XAU/USD": 0.50,
     "EUR/USD": 0.0003,
-    "AUD/CAD":     0.10,
-    "CAD/JPY":     0.10,
-    "EUR/JPY":     0.10,
+    "NDX":     0.10,
+    "GBP/USD":     0.10,
+    "GBP/JPY":     0.10,
 }
 
 # Pip sizes per symbol
 PIP_SIZES = {
     "XAU/USD": 0.1,
     "EUR/USD": 0.0001,
-    "AUD/CAD":     0.01,
+    "NDX": 0.1,
     "CAD/JPY":     0.01,
     "EUR/JPY":     0.01,
 }
