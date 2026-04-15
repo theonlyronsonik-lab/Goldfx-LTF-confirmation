@@ -26,7 +26,7 @@ SMTP_USER   = os.getenv("SMTP_USER", "")
 SMTP_PASS   = os.getenv("SMTP_PASS", "")
 ALERT_EMAIL = os.getenv("ALERT_EMAIL", "")
 
-SYMBOLS  = ["XAU/USD", "EUR/USD", "SPX", "GBP/USD" , "GBP/JPY"]
+SYMBOLS  = ["XAU/USD", "EUR/USD", "GBP/USD" , "GBP/JPY"]
 INTERVAL = "5min"
 
 COOLDOWN_MINUTES = 15
@@ -42,7 +42,6 @@ SIGNALS_FILE = os.path.join(DATA_DIR, "signals.json")
 SL_BUFFERS = {
     "XAU/USD": 0.50,
     "EUR/USD": 0.0003,
-    "NDX":     0.10,
     "GBP/USD":     0.10,
     "GBP/JPY":     0.10,
 }
@@ -51,7 +50,6 @@ SL_BUFFERS = {
 PIP_SIZES = {
     "XAU/USD": 0.1,
     "EUR/USD": 0.0001,
-    "NDX": 0.1,
     "CAD/JPY":     0.01,
     "EUR/JPY":     0.01,
 }
