@@ -5,11 +5,26 @@ import os
 import json
 import asyncio
 import smtplib
-import time
+import logging
+from concurrent.futures import ThreadPoolExecutor
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta, timezone
 from telegram import Bot
 from telegram.error import TelegramError
+
+# ─────────────────────────────────────────────
+# LOGGING
+# ─────────────────────────────────────────────
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger(__name__)
+
+# Thread pool for running blocking I/O (requests, smtplib) off the event loop
+_executor = ThreadPoolExecutor(max_workers=4)
 
 # ─────────────────────────────────────────────
 # CONFIG
@@ -277,31 +292,39 @@ def get_market_context(symbol, price, rsi, sma200, atr, trend):
 
 async def send_telegram(msg):
     if not BOT_TOKEN:
-        print(msg)
+        logger.info("Telegram not configured — printing alert:\n%s", msg)
         return
     try:
         bot = Bot(token=BOT_TOKEN)
         await bot.send_message(chat_id=CHAT_ID, text=msg)
+        logger.info("Telegram message sent (%d chars)", len(msg))
     except TelegramError as e:
-        print(f"Telegram error: {e}")
+        logger.error("Telegram error: %s", e)
 
 
-def send_email(subject, body):
+def _send_email_blocking(subject, body):
+    """Blocking SMTP call — must be run in a thread pool executor."""
+    msg = MIMEText(body)
+    msg["Subject"] = subject
+    msg["From"]    = SMTP_USER
+    msg["To"]      = ALERT_EMAIL
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as s:
+        s.ehlo()
+        s.starttls()
+        s.login(SMTP_USER, SMTP_PASS)
+        s.sendmail(SMTP_USER, ALERT_EMAIL, msg.as_string())
+
+
+async def send_email(subject, body):
+    """Send an email alert without blocking the event loop."""
     if not (SMTP_USER and SMTP_PASS and ALERT_EMAIL):
         return
     try:
-        msg = MIMEText(body)
-        msg["Subject"] = subject
-        msg["From"]    = SMTP_USER
-        msg["To"]      = ALERT_EMAIL
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as s:
-            s.ehlo()
-            s.starttls()
-            s.login(SMTP_USER, SMTP_PASS)
-            s.sendmail(SMTP_USER, ALERT_EMAIL, msg.as_string())
-        print("Email alert sent")
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(_executor, _send_email_blocking, subject, body)
+        logger.info("Email alert sent: %s", subject)
     except Exception as e:
-        print(f"Email error: {e}")
+        logger.error("Email error: %s", e)
 
 
 def is_high_quality(trend_aligned):
@@ -313,7 +336,9 @@ def is_high_quality(trend_aligned):
 # DATA
 # ─────────────────────────────────────────────
 
-def get_data(symbol):
+async def get_data(symbol):
+    """Fetch OHLCV data from TwelveData, running the blocking HTTP call in a
+    thread-pool executor so the asyncio event loop is never blocked."""
     global active_api_key
 
     def _is_rate_limited(resp, r):
@@ -326,51 +351,65 @@ def get_data(symbol):
         global active_api_key
         other = API_KEY_2 if active_api_key == API_KEY else API_KEY
         if other:
-            print(f"[API] Rate limit hit on current key — switching to {'API_KEY_2' if other == API_KEY_2 else 'API_KEY'}")
+            logger.warning(
+                "[API] Rate limit hit on current key — switching to %s",
+                "API_KEY_2" if other == API_KEY_2 else "API_KEY",
+            )
             active_api_key = other
             return True
         return False
 
+    def _fetch(url):
+        """Blocking HTTP fetch — runs inside the thread pool."""
+        return requests.get(url, timeout=(10, 30))
+
+    loop = asyncio.get_event_loop()
     max_retries = 3
     for attempt in range(1, max_retries + 1):
-        url = (f"https://api.twelvedata.com/time_series"
-               f"?symbol={symbol}&interval={INTERVAL}&outputsize=210&apikey={active_api_key}")
+        url = (
+            f"https://api.twelvedata.com/time_series"
+            f"?symbol={symbol}&interval={INTERVAL}&outputsize=210&apikey={active_api_key}"
+        )
         try:
-            resp = requests.get(url, timeout=(10, 30))
+            resp = await loop.run_in_executor(_executor, _fetch, url)
             r = resp.json()
         except requests.exceptions.Timeout as e:
-            print(f"[{symbol}] Timeout on attempt {attempt}/{max_retries}: {e}")
+            logger.warning("[%s] Timeout on attempt %d/%d: %s", symbol, attempt, max_retries, e)
             if attempt < max_retries:
-                time.sleep(2 ** (attempt - 1))
+                await asyncio.sleep(2 ** (attempt - 1))
                 continue
-            print(f"[{symbol}] All {max_retries} attempts timed out, skipping symbol")
+            logger.error("[%s] All %d attempts timed out, skipping symbol", symbol, max_retries)
             return None
         except ValueError as e:
             # JSON decode error — API returned empty/invalid body
-            print(f"[{symbol}] JSON parse error on attempt {attempt}/{max_retries}: {e}")
+            logger.warning("[%s] JSON parse error on attempt %d/%d: %s", symbol, attempt, max_retries, e)
             if attempt < max_retries:
-                time.sleep(2 ** (attempt - 1))
+                await asyncio.sleep(2 ** (attempt - 1))
                 continue
-            print(f"[{symbol}] All {max_retries} attempts returned invalid JSON, skipping symbol")
+            logger.error("[%s] All %d attempts returned invalid JSON, skipping symbol", symbol, max_retries)
             return None
         except requests.exceptions.RequestException as e:
-            print(f"[{symbol}] Network error on attempt {attempt}/{max_retries}: {e}")
+            logger.warning("[%s] Network error on attempt %d/%d: %s", symbol, attempt, max_retries, e)
             if attempt < max_retries:
-                time.sleep(2 ** (attempt - 1))
+                await asyncio.sleep(2 ** (attempt - 1))
                 continue
-            print(f"[{symbol}] All {max_retries} attempts failed with network error, skipping symbol")
+            logger.error("[%s] All %d attempts failed with network error, skipping symbol", symbol, max_retries)
             return None
 
         # Rate-limit detected — try switching to the other API key and retry immediately
         if _is_rate_limited(resp, r):
             if _switch_key():
                 continue  # retry with the new key (does not consume an extra attempt)
-            print(f"[{symbol}] Rate limited and no fallback key available, skipping symbol")
+            logger.error("[%s] Rate limited and no fallback key available, skipping symbol", symbol)
             return None
 
         if "values" not in r:
             # API-level error (bad key, unknown symbol, etc.) — no point retrying
-            print(f"[{symbol}] API error (no values): {r.get('message', r.get('status', 'unknown error'))}")
+            logger.error(
+                "[%s] API error (no values): %s",
+                symbol,
+                r.get("message", r.get("status", "unknown error")),
+            )
             return None
 
         df = pd.DataFrame(r["values"]).iloc[::-1].reset_index(drop=True)
@@ -379,16 +418,16 @@ def get_data(symbol):
 
         # ── Data validation ──────────────────────────────────────────────
         if len(df) < 200:
-            print(f"[{symbol}] Insufficient candles: got {len(df)}, need at least 200 — skipping")
+            logger.warning("[%s] Insufficient candles: got %d, need at least 200 — skipping", symbol, len(df))
             return None
 
         ohlc_cols = ["open", "high", "low", "close"]
         if df[ohlc_cols].isnull().any().any():
-            print(f"[{symbol}] OHLC data contains NaN values — skipping")
+            logger.warning("[%s] OHLC data contains NaN values — skipping", symbol)
             return None
 
         if (df[ohlc_cols] == 0).any().any():
-            print(f"[{symbol}] OHLC data contains zero values — skipping")
+            logger.warning("[%s] OHLC data contains zero values — skipping", symbol)
             return None
 
         return df
@@ -780,7 +819,7 @@ async def check_tp(symbol, signal, price=None):
 async def main():
     load_state()
     init_state()
-    print(f"Bot started | Symbols: {SYMBOLS}")
+    logger.info("Bot started | Symbols: %s", SYMBOLS)
 
     await send_telegram(
         f"🤖 LTF Signal Bot Online\n"
@@ -791,21 +830,30 @@ async def main():
         f"TP2: Opposite double signal"
     )
 
+    scan_count = 0
     while True:
         try:
+            scan_start = datetime.now(timezone.utc)
             sessions = get_active_sessions()
             sess_on  = sessions != ["Off-Hours"]
             sess_str = session_label(sessions)
 
             if not sess_on:
-                now_str = datetime.now(timezone.utc).strftime("%H:%M")
-                print(f"[{now_str} UTC] Off-hours, sleeping 60s…")
+                logger.info("[%s UTC] Off-hours — sleeping 60s…", scan_start.strftime("%H:%M"))
                 save_state(False, sessions)
                 await asyncio.sleep(60)
                 continue
 
+            scan_count += 1
+            logger.info(
+                "─── Scan #%d started at %s UTC | Session: %s ───",
+                scan_count,
+                scan_start.strftime("%Y-%m-%d %H:%M:%S"),
+                sess_str,
+            )
+
             for symbol in SYMBOLS:
-                df = get_data(symbol)
+                df = await get_data(symbol)
                 if df is None:
                     continue
 
@@ -894,7 +942,7 @@ async def main():
                         print(f"[{symbol}] Telegram BUY signal sent")
 
                         if is_high_quality(trend_aligned):
-                            send_email(f"⭐ HIGH QUALITY BUY — {symbol}", tg_msg)
+                            await send_email(f"⭐ HIGH QUALITY BUY — {symbol}", tg_msg)
 
                         sig_rec = {
                             "symbol": symbol, "type": "BUY", "time": ts,
@@ -960,7 +1008,7 @@ async def main():
                         print(f"[{symbol}] Telegram SELL signal sent")
 
                         if is_high_quality(trend_aligned):
-                            send_email(f"⭐ HIGH QUALITY SELL — {symbol}", tg_msg)
+                            await send_email(f"⭐ HIGH QUALITY SELL — {symbol}", tg_msg)
 
                         sig_rec = {
                             "symbol": symbol, "type": "SELL", "time": ts,
@@ -985,10 +1033,21 @@ async def main():
                         last_div_time.setdefault(symbol, {})["BEAR"] = str(bear_idx)
 
             save_state(sess_on, sessions)
+            scan_elapsed = (datetime.now(timezone.utc) - scan_start).total_seconds()
+            next_scan = datetime.now(timezone.utc).strftime("%H:%M:%S")
+            logger.info(
+                "─── Scan #%d complete in %.1fs | Next scan in 300s (≈ %s UTC) ───",
+                scan_count,
+                scan_elapsed,
+                next_scan,
+            )
             await asyncio.sleep(300)
 
+        except asyncio.CancelledError:
+            logger.info("Main loop cancelled — shutting down cleanly")
+            raise
         except Exception as e:
-            print(f"Runtime error: {e}")
+            logger.exception("Runtime error in scan loop (will retry in 180s): %s", e)
             await asyncio.sleep(180)
 
 
