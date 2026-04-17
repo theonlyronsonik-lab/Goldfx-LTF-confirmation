@@ -898,7 +898,7 @@ async def main():
 
                         sig_rec = {
                             "symbol": symbol, "type": "BUY", "time": ts,
-                            "entry": entry, "sl": sl,
+                            "price": entry, "entry": entry, "sl": sl,
                             "trend_aligned": trend_aligned, "label": label,
                             "session": sess_str, "rsi": rsi, "trend": trend,
                             "context": context,
@@ -964,7 +964,7 @@ async def main():
 
                         sig_rec = {
                             "symbol": symbol, "type": "SELL", "time": ts,
-                            "entry": entry, "sl": sl,
+                            "price": entry, "entry": entry, "sl": sl,
                             "trend_aligned": trend_aligned, "label": label,
                             "session": sess_str, "rsi": rsi, "trend": trend,
                             "context": context,
